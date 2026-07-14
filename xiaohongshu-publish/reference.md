@@ -1,8 +1,65 @@
-# 小红书发布接口参考
+# 小红书发布参考文档
 
-> 已实测验证的部分标注 ✅；基于抓包 URL/方法但请求体需校准的标注 ⚠️。
+## 页面交互 DOM 选择器参考
 
-## 签名机制 ✅
+> 以下选择器基于 2025-07 实测。小红书前端可能更新，如失效请用 `take_snapshot` 重新确认。
+
+### 发布页关键元素
+
+| 用途 | 选择器 | 说明 |
+|------|---------|------|
+| 图文 Tab | `.creator-tab`（文本含"上传图文"） | 点击切换到图文发布模式 |
+| 文件上传 input | `input.upload-input` (type=file) | 用 `upload_file` MCP 工具上传图片 |
+| 标题输入框 | `input.d-text[placeholder="填写标题会有更多赞哦"]` | 必须用 native setter 填值 |
+| 正文编辑器 | `div.tiptap.ProseMirror` (contenteditable) | 用 `execCommand('insertText')` 填值 |
+| 发布按钮 | `button`（文本="发布"） | 点击后变为 disabled，等 URL 跳转 |
+| 暂存离开按钮 | `button`（文本="暂存离开"） | 保存为草稿不发布 |
+
+### 笔记管理页 (`/new/note-manager`)
+
+| 用途 | 选择器 | 说明 |
+|------|---------|------|
+| 笔记列表 | 页面 body innerText | 包含所有笔记标题和状态 |
+| "审核中" Tab | 文本="审核中" 的 tab 元素 | 新发布的笔记默认在此状态 |
+| 草稿箱入口 | 文本含"草稿箱(N)" 的元素 | 点击展开草稿箱面板 |
+| 草稿"编辑"按钮 | 草稿项内的"编辑"文本 | 不是标准 button，需用 dispatchEvent 点击 |
+
+### 填写表单的正确方式
+
+```javascript
+// 标题：必须用 native setter
+const nativeSetter = Object.getOwnPropertyDescriptor(
+  window.HTMLInputElement.prototype, 'value').set;
+nativeSetter.call(titleInput, title);
+titleInput.dispatchEvent(new Event('input', { bubbles: true }));
+titleInput.dispatchEvent(new Event('change', { bubbles: true }));
+
+// 正文：必须用 execCommand
+const editor = document.querySelector('.tiptap.ProseMirror');
+editor.focus();
+document.execCommand('insertText', false, desc);
+editor.dispatchEvent(new Event('input', { bubbles: true }));
+```
+
+### 点击非标准按钮的 workaround
+
+草稿箱的"编辑"按钮不是标准 `<button>`，MCP click 会超时。用 dispatchEvent：
+
+```javascript
+() => {
+  const draftItems = document.querySelectorAll('[class*="draft"]');
+  // 找到目标草稿项内的"编辑"文本元素
+  const editEl = /* 定位逻辑 */;
+  editEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+}
+```
+
+## 接口直连参考（FALLBACK ONLY）
+
+> ⚠️ 接口直连可能返回 HTTP 461 + `code:0` 假成功，笔记实际未创建。
+> 仅当页面交互方式失效时使用，且发布后必须到笔记管理页验证。
+
+### 签名机制 ✅
 
 所有 `creator.xiaohongshu.com` / `edith.xiaohongshu.com` 接口都要签名头 `X-s` / `X-t`。
 
@@ -22,7 +79,11 @@ const sign = window._webmsxyw(path, body);
   typeof window[k] === 'function' && /msxyw|sign|xhs|xyw/i.test(k))
 ```
 
-## 接口 1：获取上传凭证 ✅
+## 接口直连详细参考（FALLBACK ONLY）
+
+> 以下内容仅供页面交互失效时参考。正常情况下不需要。
+
+### 接口 1：获取上传凭证
 
 ```
 GET https://creator.xiaohongshu.com/api/media/v1/upload/creator/permit
@@ -112,9 +173,25 @@ Headers: X-s, X-t, Content-Type: application/json
 
 ## 故障排查
 
+### 页面交互问题
+
 | 现象 | 原因 | 处理 |
 |------|------|------|
-| `status:406` | 缺签名或签名无效 | 确认 `_webmsxyw` 存在且 path 与实际请求完全一致（含 query） |
+| MCP `fill` 超时 | 小红书前端框架对 fill 事件响应慢 | 改用 `evaluate_script` + native setter |
+| MCP `click` 超时 | 非标准按钮元素（如草稿"编辑"） | 改用 `evaluate_script` + dispatchEvent |
+| `upload_file` 后页面未跳转 | 上传触发慢或 Tab 未切换 | 等 2-3 秒，或手动点击"上传图文" Tab |
+| 标题显示为空 | 未用 native setter | 必须用 `HTMLInputElement.prototype.value.set` |
+| 正文无内容 | 直接操作 innerText | 必须用 `execCommand('insertText')` |
+| 草稿箱出现"暂无笔记标题" | 页面自动保存 | 正常现象，可手动删除 |
+| 笔记管理页找不到笔记 | 仍在审核中 | 切到"审核中" Tab 查看 |
+| uid 失效 | snapshot 每次重新生成 | 每次操作前重新 `take_snapshot` |
+
+### 接口直连问题（FALLBACK）
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| HTTP 461 + `code:0` | 风控拦截，假成功 | 笔记未创建，改用页面交互 |
+| `status:406` | 缺签名或签名无效 | 确认 `_webmsxyw` 存在且 path 一致 |
 | `code:-1` / 401 | 登录态无效 | Cookie 未生效，改用浏览器已登录会话 |
 | `_webmsxyw is not a function` | 前端改版 | 用签名函数定位脚本重新查找 |
 | note 返回字段校验失败 | 请求体模板过期 | 重新执行"校准 note 请求体" |

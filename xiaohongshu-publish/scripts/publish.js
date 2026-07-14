@@ -1,4 +1,15 @@
-// 小红书图文笔记发布脚本 —— 在创作页（creator.xiaohongshu.com）上下文用 evaluate_script 执行。
+// ⚠️ [FALLBACK ONLY] 接口直连发布脚本 —— 不推荐作为首选方案
+//
+// 实测发现：直接调 POST /web_api/sns/v2/note 接口可能返回 HTTP 461 + code:0 假成功，
+// 小红书风控系统识别脚本请求后拦截，笔记实际未创建。
+//
+// ✅ 推荐方案：页面交互方式（upload_file + evaluate_script 填写表单 + click 发布按钮）
+// 详见 SKILL.md 的工作流。
+//
+// 本脚本仅作为 fallback 备用，当页面交互方式失效时使用。
+// 使用后务必到笔记管理页验证笔记是否真正创建成功。
+//
+// --- 以下为原接口直连逻辑 ---
 //
 // 用法：agent 复制本函数体，替换 PLACEHOLDER（TITLE / DESC / IMAGE_DATA_URIS），
 // 作为 evaluate_script 的 function 参数执行。图片必须以 data:image/...;base64,... 内联，
